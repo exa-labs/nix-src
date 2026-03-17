@@ -331,6 +331,7 @@ EvalState::EvalState(
     , debugStop(false)
     , trylevel(0)
     , asyncPathWriter(AsyncPathWriter::make(store))
+    , storeToSrc(make_ref<decltype(storeToSrc)::element_type>())
     , importResolutionCache(make_ref<decltype(importResolutionCache)::element_type>())
     , fileEvalCache(make_ref<decltype(fileEvalCache)::element_type>())
     , positionToDocComment(make_ref<decltype(positionToDocComment)::element_type>())
@@ -2543,9 +2544,27 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const SourcePat
         nullptr,
         repair);
     allowPath(dstPath);
+    storeToSrc->try_emplace(dstPath, path);
 
     context.insert(NixStringContextElem::Opaque{.path = dstPath});
     return dstPath;
+}
+
+std::optional<SourcePath> EvalState::getSourceOrigin(const StorePath & storePath) const
+{
+    auto result = getConcurrent(*storeToSrc, storePath);
+    if (result)
+        return *result;
+    return std::nullopt;
+}
+
+std::map<StorePath, SourcePath> EvalState::getSourceOrigins() const
+{
+    std::map<StorePath, SourcePath> result;
+    storeToSrc->cvisit_all([&](const auto & entry) {
+        result.emplace(entry.first, entry.second);
+    });
+    return result;
 }
 
 SourcePath EvalState::coerceToPath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx)

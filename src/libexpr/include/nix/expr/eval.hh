@@ -464,6 +464,10 @@ public:
 
 private:
 
+    /* Reverse mapping: store paths back to their original source paths.
+       Populated by copyPathToStore() so we can recover provenance. */
+    const ref<boost::concurrent_flat_map<StorePath, SourcePath>> storeToSrc;
+
     /**
      * A cache that maps paths to "resolved" paths for importing Nix
      * expressions, i.e. `/foo` to `/foo/default.nix`.
@@ -571,6 +575,19 @@ public:
      * Allow access to a store path and return it as a string.
      */
     void allowAndSetStorePathString(const StorePath & storePath, Value & v);
+
+    /**
+     * Look up the original source path for a store path that was
+     * copied into the store during this evaluation.  Returns
+     * std::nullopt when the store path wasn't produced by this
+     * evaluator (e.g. it came from a substituter).
+     */
+    std::optional<SourcePath> getSourceOrigin(const StorePath & storePath) const;
+
+    /**
+     * Return the full store→source mapping built during this evaluation.
+     */
+    std::map<StorePath, SourcePath> getSourceOrigins() const;
 
     void checkURI(const std::string & uri);
 
