@@ -1196,6 +1196,7 @@ struct GitInputScheme : InputScheme
 
             mounts.insert_or_assign(CanonPath::root, accessor);
             accessor = makeMountedSourceAccessor(std::move(mounts));
+            accessor->originalRootPath = repoPath;
         }
 
         if (!repoInfo.workdirInfo.isDirty) {
