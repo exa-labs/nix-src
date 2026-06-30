@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   eval:
-    runs-on: UbuntuLatest32Cores128G
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,11 +35,11 @@ jobs:
     uses: ./.github/workflows/build.yml
     # Determinate Secure Packages is a private flake dependency that external
     # (fork) contributors can't access, so only build it for non-fork PRs.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'DeterminateSystems/nix-src'
+    if: github.repository == 'DeterminateSystems/nix-src' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'DeterminateSystems/nix-src')
     with:
       system: x86_64-linux
-      runner: namespace-profile-linuxamd32c64g-cache
-      runner_for_virt: UbuntuLatest32Cores128G
+      runner: ubuntu-latest
+      runner_for_virt: ubuntu-latest
       runner_small: ubuntu-latest
       run_tests: true
       run_vm_tests: true
@@ -56,12 +56,12 @@ jobs:
     uses: ./.github/workflows/build.yml
     # Build the non-DSP flake in the merge queue and for external (fork) PRs,
     # which can't access Determinate Secure Packages.
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != 'DeterminateSystems/nix-src')
+    if: github.repository != 'DeterminateSystems/nix-src' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != 'DeterminateSystems/nix-src')
     with:
       flake: .
       system: x86_64-linux
-      runner: namespace-profile-linuxamd32c64g-cache
-      runner_for_virt: UbuntuLatest32Cores128G
+      runner: ubuntu-latest
+      runner_for_virt: ubuntu-latest
       runner_small: ubuntu-latest
       run_tests: true
       run_vm_tests: false
@@ -70,12 +70,12 @@ jobs:
 
   build_aarch64-linux:
     uses: ./.github/workflows/build.yml
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'DeterminateSystems/nix-src'
+    if: github.repository == 'DeterminateSystems/nix-src' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'DeterminateSystems/nix-src')
     with:
       system: aarch64-linux
-      runner: UbuntuLatest32Cores128GArm
-      runner_for_virt: UbuntuLatest32Cores128GArm
-      runner_small: UbuntuLatest32Cores128GArm
+      runner: ubuntu-24.04-arm
+      runner_for_virt: ubuntu-24.04-arm
+      runner_small: ubuntu-24.04-arm
     secrets:
       sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
       sentry_org: ${{ secrets.SENTRY_ORG }}
@@ -83,13 +83,13 @@ jobs:
 
   build_aarch64-linux_no_dsp:
     uses: ./.github/workflows/build.yml
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != 'DeterminateSystems/nix-src')
+    if: github.repository != 'DeterminateSystems/nix-src' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != 'DeterminateSystems/nix-src')
     with:
       flake: .
       system: aarch64-linux
-      runner: UbuntuLatest32Cores128GArm
-      runner_for_virt: UbuntuLatest32Cores128GArm
-      runner_small: UbuntuLatest32Cores128GArm
+      runner: ubuntu-24.04-arm
+      runner_for_virt: ubuntu-24.04-arm
+      runner_small: ubuntu-24.04-arm
       upload_artifacts: false
     secrets:
       sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -98,12 +98,12 @@ jobs:
 
   build_aarch64-darwin:
     uses: ./.github/workflows/build.yml
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'DeterminateSystems/nix-src'
+    if: github.repository == 'DeterminateSystems/nix-src' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'DeterminateSystems/nix-src')
     with:
       system: aarch64-darwin
-      runner: namespace-profile-mac-m2-12c28g
-      runner_for_virt: namespace-profile-mac-m2-12c28g
-      runner_small: macos-latest-xlarge
+      runner: macos-latest
+      runner_for_virt: macos-latest
+      runner_small: macos-latest
     secrets:
       sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
       sentry_org: ${{ secrets.SENTRY_ORG }}
@@ -111,13 +111,13 @@ jobs:
 
   build_aarch64-darwin_no_dsp:
     uses: ./.github/workflows/build.yml
-    if: github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != 'DeterminateSystems/nix-src')
+    if: github.repository != 'DeterminateSystems/nix-src' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != 'DeterminateSystems/nix-src')
     with:
       flake: .
       system: aarch64-darwin
-      runner: namespace-profile-mac-m2-12c28g
-      runner_for_virt: namespace-profile-mac-m2-12c28g
-      runner_small: macos-latest-xlarge
+      runner: macos-latest
+      runner_for_virt: macos-latest
+      runner_small: macos-latest
       upload_artifacts: false
     secrets:
       sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
