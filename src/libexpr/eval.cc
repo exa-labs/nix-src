@@ -2562,9 +2562,7 @@ std::optional<SourcePath> EvalState::getSourceOrigin(const StorePath & storePath
 std::map<StorePath, SourcePath> EvalState::getSourceOrigins() const
 {
     std::map<StorePath, SourcePath> result;
-    storeToSrc->cvisit_all([&](const auto & entry) {
-        result.emplace(entry.first, entry.second);
-    });
+    storeToSrc->cvisit_all([&](const auto & entry) { result.emplace(entry.first, entry.second); });
     return result;
 }
 
@@ -2583,19 +2581,17 @@ void EvalState::recordPathOrigin(const StorePath & storePath, const SourcePath &
     // Parse the store path prefix and look it up in sourceStoreToOriginalPath.
     if (hasPrefix(pathStr, storeDirStr + "/")) {
         auto afterStore = pathStr.find('/', storeDirStr.size() + 1);
-        std::string storePathStr = (afterStore == std::string::npos)
-            ? pathStr : pathStr.substr(0, afterStore);
+        std::string storePathStr = (afterStore == std::string::npos) ? pathStr : pathStr.substr(0, afterStore);
         try {
             auto sp = store->parseStorePath(storePathStr);
             if (auto origRoot = getConcurrent(*sourceStoreToOriginalPath, sp)) {
-                auto relPath = (afterStore == std::string::npos)
-                    ? "" : pathStr.substr(afterStore + 1);
-                auto origPath = relPath.empty()
-                    ? *origRoot : (*origRoot / relPath);
+                auto relPath = (afterStore == std::string::npos) ? "" : pathStr.substr(afterStore + 1);
+                auto origPath = relPath.empty() ? *origRoot : (*origRoot / relPath);
                 sourceStoreToOriginalPath->try_emplace(storePath, origPath);
                 return;
             }
-        } catch (...) {}
+        } catch (...) {
+        }
     }
 
     // Strategy 2: the accessor has originalRootPath set directly
@@ -2603,8 +2599,7 @@ void EvalState::recordPathOrigin(const StorePath & storePath, const SourcePath &
     if (srcPath.accessor->originalRootPath) {
         auto relPath = srcPath.path.rel();
         auto origRoot = *srcPath.accessor->originalRootPath;
-        auto origPath = (relPath.empty() || relPath == ".")
-            ? origRoot : (origRoot / relPath);
+        auto origPath = (relPath.empty() || relPath == ".") ? origRoot : (origRoot / relPath);
         sourceStoreToOriginalPath->try_emplace(storePath, origPath);
         return;
     }
@@ -2619,9 +2614,8 @@ void EvalState::recordPathOrigin(const StorePath & storePath, const SourcePath &
         // holding a lock on the concurrent map while calling try_emplace
         // (which would deadlock or violate cvisit_all's shared-lock contract).
         std::vector<std::pair<StorePath, std::filesystem::path>> snapshot;
-        sourceStoreToOriginalPath->cvisit_all([&](const auto & entry) {
-            snapshot.emplace_back(entry.first, entry.second);
-        });
+        sourceStoreToOriginalPath->cvisit_all(
+            [&](const auto & entry) { snapshot.emplace_back(entry.first, entry.second); });
 
         // Find the registered source whose storeFS mount matches srcPath's
         // accessor identity, and map to that source's original path. No

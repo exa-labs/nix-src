@@ -59,8 +59,7 @@ struct CmdDerivationSourceOrigins : InstallablesCommand, MixPrintJSON
      *     accessor, e.g. from path: flake inputs).  Combine
      *     originalRootPath with the relative path component.
      */
-    std::optional<std::string> resolveOriginalPath(
-        ref<Store> store, ref<EvalState> state, const SourcePath & srcPath)
+    std::optional<std::string> resolveOriginalPath(ref<Store> store, ref<EvalState> state, const SourcePath & srcPath)
     {
         // Use the canonical path, not to_string() which goes through
         // showPath/resolve and may hide the actual store path.
