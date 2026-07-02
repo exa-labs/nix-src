@@ -72,9 +72,8 @@ determine which parts of a monorepo are affected by a change.
 
 The mapping is populated from three sources during evaluation:
 
-1. **`EvalState::storeToSrc`** — the reverse of `srcToStore`, populated
-   alongside it in `copyPathToStore()`. Captures paths added via the
-   normal evaluation path.
+1. **`EvalState::storeToSrc`** — populated in `copyPathToStore()`.
+   Captures paths added via the normal evaluation path.
 
 2. **`EvalState::sourceStoreToOriginalPath`** — records the original
    filesystem path for flake source store paths, set in `mountInput()`
