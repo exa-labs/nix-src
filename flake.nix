@@ -1,14 +1,14 @@
 {
   description = "The purely functional package manager";
 
-  inputs.nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.2511";
+  inputs.nixpkgs.url = "tarball+https://tarball.internal.exa.ai/github/NixOS/nixpkgs/0590cd39f728e129122770c029970378a79d076a.tar.gz";
 
   inputs.nixpkgs-regression.url = "github:NixOS/nixpkgs/215d4d0fd80ca5163643b03a33fde804a29cc1e2";
   inputs.nixpkgs-23-11.url = "github:NixOS/nixpkgs/a62e6edd6d5e1fa0329b8653c801147986f8d446";
 
   # dev tooling
-  inputs.flake-parts.url = "https://flakehub.com/f/hercules-ci/flake-parts/0.1";
-  inputs.git-hooks-nix.url = "https://flakehub.com/f/cachix/git-hooks.nix/0.1.941";
+  inputs.flake-parts.url = "tarball+https://tarball.internal.exa.ai/github/hercules-ci/flake-parts/49f0870db23e8c1ca0b5259734a02cd9e1e371a1.tar.gz";
+  inputs.git-hooks-nix.url = "tarball+https://tarball.internal.exa.ai/github/cachix/git-hooks.nix/80479b6ec16fefd9c1db3ea13aeb038c60530f46.tar.gz";
   # work around https://github.com/NixOS/nix/issues/7730
   inputs.flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
   inputs.git-hooks-nix.inputs.nixpkgs.follows = "nixpkgs";
