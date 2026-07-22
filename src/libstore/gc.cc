@@ -494,6 +494,13 @@ void LocalStore::collectGarbage(const GCOptions & options, GCResults & results)
                             } else
                                 printError("received garbage instead of a root from client");
                             writeFull(fdClient.get(), "1", false);
+                        } catch (Interrupted &) {
+                            /* Interrupted is a BaseError, not an Error, so the
+                               handler below does not catch it. Letting it
+                               escape would terminate the whole process, since
+                               no exception may leave a std::thread. */
+                            debug("interrupted while reading GC root from client");
+                            break;
                         } catch (Error & e) {
                             debug("reading GC root from client: %s", e.msg());
                             break;
