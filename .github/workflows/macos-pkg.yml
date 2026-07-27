@@ -1,0 +1,52 @@
+name: "macOS pkg"
+
+# Builds the macOS installer package (.pkg) wrapping the embedded-closure rust
+# installer (packaging/rust-installer) and publishes it as a GitHub release
+# artifact on every push to the default branch, for distribution via MDM.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: "write"
+  id-token: "write"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pkg:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/determinate-nix-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@main
+      - name: Build rust installer with embedded Nix
+        run: nix build .#rustInstaller -L -o result-installer
+      - name: Build .pkg
+        id: build
+        run: |
+          version="$(cat .version)"
+          shortsha="${GITHUB_SHA:0:7}"
+          pkg="exa-nix-${version}-${shortsha}.pkg"
+          ./.github/scripts/build-macos-pkg.sh \
+            result-installer/bin/nix-installer "$version" "$pkg"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "shortsha=$shortsha" >> "$GITHUB_OUTPUT"
+          echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+      - name: Create release with .pkg artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="exa-nix-${{ steps.build.outputs.version }}-${{ steps.build.outputs.shortsha }}"
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --notes "macOS installer package for Exa Nix ${{ steps.build.outputs.version }} (${GITHUB_SHA})." \
+            "${{ steps.build.outputs.pkg }}"
