@@ -43,4 +43,8 @@ done
 sed -i.bak 's|^URL: nar/|URL: |' "$out"/*.narinfo
 rm -f "$out"/*.narinfo.bak
 
+# Root store path, so consumers can `nix copy --from <release-url> $(curl
+# .../store-paths)` to prefetch the whole closure.
+echo "$store_path" > "$out/store-paths"
+
 echo "cache for $store_path written to $out ($(find "$out" -type f | wc -l | tr -d ' ') files)"
