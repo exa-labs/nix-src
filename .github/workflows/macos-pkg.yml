@@ -3,6 +3,13 @@ name: "macOS pkg"
 # Builds the macOS installer package (.pkg) wrapping the embedded-closure rust
 # installer (packaging/rust-installer) and publishes it as a GitHub release
 # artifact on every push to the default branch, for distribution via MDM.
+#
+# The release also carries flat binary caches for the nix-cli closure of every
+# supported system (aarch64-darwin plus the Linux systems built below), so
+# consumers can substitute the prebuilt fork straight from the release:
+#   extra-substituters = https://github.com/<owner>/<repo>/releases/download/<tag>
+# Per-system closure roots are published as store-paths-<system>, and the
+# narinfo signing public key as public-key.
 
 on:
   workflow_dispatch:
@@ -20,9 +27,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  linux-cache:
+    name: linux cache (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/determinate-nix-action@main
+      - name: Build nix-cli
+        run: nix build .#nix-cli -L -o result-nix
+      - name: Create binary cache artifacts for the nix-cli closure
+        env:
+          NIX_RELEASE_SIGNING_KEY: ${{ secrets.NIX_RELEASE_SIGNING_KEY }}
+        run: |
+          ./.github/scripts/make-release-cache.sh result-nix cache
+          mv cache/store-paths "cache/store-paths-${{ matrix.system }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-cache-${{ matrix.system }}
+          path: cache
+          if-no-files-found: error
+
   pkg:
     runs-on: macos-latest
     timeout-minutes: 120
+    needs: linux-cache
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/determinate-nix-action@main
@@ -34,7 +71,30 @@ jobs:
       - name: Create binary cache artifacts for the nix-cli closure
         env:
           NIX_RELEASE_SIGNING_KEY: ${{ secrets.NIX_RELEASE_SIGNING_KEY }}
-        run: ./.github/scripts/make-release-cache.sh result-nix cache
+        run: |
+          ./.github/scripts/make-release-cache.sh result-nix cache
+          cp cache/store-paths cache/store-paths-aarch64-darwin
+      - name: Publish the narinfo signing public key
+        env:
+          NIX_RELEASE_SIGNING_KEY: ${{ secrets.NIX_RELEASE_SIGNING_KEY }}
+        run: |
+          if [[ -n "$NIX_RELEASE_SIGNING_KEY" ]]; then
+            printf '%s' "$NIX_RELEASE_SIGNING_KEY" | nix key convert-secret-to-public > cache/public-key
+          fi
+      - name: Merge Linux caches into the release cache
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-cache-*
+          path: linux-cache
+          merge-multiple: true
+      - name: Deduplicate cache assets
+        # nars/narinfos shared between closures (e.g. source tarballs) are
+        # content-addressed by name, so skipping existing files is safe.
+        run: |
+          for f in linux-cache/*; do
+            dest="cache/$(basename "$f")"
+            [[ -e "$dest" ]] || cp "$f" "$dest"
+          done
       - name: Build .pkg
         id: build
         run: |
@@ -54,6 +114,6 @@ jobs:
           gh release create "$tag" \
             --target "$GITHUB_SHA" \
             --title "$tag" \
-            --notes "macOS installer package for Exa Nix ${{ steps.build.outputs.version }} (${GITHUB_SHA}). Also serves as a flat binary cache for the nix-cli closure: extra-substituters = https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
+            --notes "macOS installer package for Exa Nix ${{ steps.build.outputs.version }} (${GITHUB_SHA}). Also serves as a flat binary cache for the nix-cli closures (per-system roots in store-paths-<system>, signing key in public-key): extra-substituters = https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
             "${{ steps.build.outputs.pkg }}" \
             cache/*
