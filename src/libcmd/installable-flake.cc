@@ -335,6 +335,11 @@ ref<eval_cache::EvalCache> InstallableFlake::openEvalCache() const
     return ref(_evalCache);
 }
 
+void InstallableFlake::releaseEvalCache()
+{
+    _evalCache.reset();
+}
+
 FlakeRef InstallableFlake::nixpkgsFlakeRef() const
 {
     auto lockedFlake = getLockedFlake();
