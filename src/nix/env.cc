@@ -114,6 +114,8 @@ struct CmdShell : InstallablesCommand, MixEnvironment
 
         // Release our references to eval caches to ensure they are persisted to disk, because
         // we are about to exec out of this process without running C++ destructors.
+        for (auto & installable : installables)
+            installable->releaseEvalCache();
         state->evalCaches.clear();
 
         execProgramInStore(store, UseLookupPath::Use, *command.begin(), args);

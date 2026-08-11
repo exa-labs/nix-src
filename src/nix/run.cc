@@ -155,6 +155,7 @@ struct CmdRun : InstallableValueCommand, MixEnvironment
 
         // Release our references to eval caches to ensure they are persisted to disk, because
         // we are about to exec out of this process without running C++ destructors.
+        installable->releaseEvalCache();
         state->evalCaches.clear();
 
         setEnviron();

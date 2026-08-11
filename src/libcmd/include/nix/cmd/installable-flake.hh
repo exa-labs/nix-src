@@ -60,6 +60,8 @@ struct InstallableFlake : InstallableValue
         return flakeRef.to_string() + "#" + fragment;
     }
 
+    void releaseEvalCache() override;
+
     DerivedPathsWithInfo toDerivedPaths() override;
 
     std::pair<Value *, PosIdx> toValue(EvalState & state) override;

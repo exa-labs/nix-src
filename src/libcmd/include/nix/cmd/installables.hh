@@ -131,6 +131,16 @@ struct Installable
     virtual ~Installable() {}
 
     /**
+     * Drop any reference this installable holds to an evaluation
+     * cache, so that the cache can be destroyed - and thus committed
+     * to disk - before we `exec()` out of this process without
+     * running C++ destructors.
+     *
+     * The installable must not be used for evaluation afterwards.
+     */
+    virtual void releaseEvalCache() {}
+
+    /**
      * What Installable is this?
      *
      * Prints back valid CLI syntax that would result in this same

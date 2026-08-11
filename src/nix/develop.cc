@@ -702,6 +702,7 @@ struct CmdDevelop : Common, MixEnvironment
 
         // Release our references to eval caches to ensure they are persisted to disk, because
         // we are about to exec out of this process without running C++ destructors.
+        installable->releaseEvalCache();
         getEvalState()->evalCaches.clear();
 
         execProgramInStore(store, UseLookupPath::Use, shell, args, buildEnvironment.getSystem());
