@@ -484,8 +484,12 @@ struct curlFileTransfer : public FileTransfer
 
         void unpause()
         {
-            /* Unpausing an already unpaused transfer is a no-op. */
-            if (paused) {
+            /* Unconditionally tell curl to continue: unpausing an already
+               unpaused transfer is a no-op, and gating this on our own pause
+               bookkeeping risks leaving the transfer paused in curl forever
+               if the two ever disagree (a paused transfer never triggers the
+               stalled-download timeout). */
+            if (active) {
                 paused = false;
                 curl_easy_pause(req, CURLPAUSE_CONT);
             }
@@ -1276,8 +1280,12 @@ void FileTransfer::download(
         state->data.append(data);
         state->avail.notify_one();
 
-        if (state->data.size() <= fileTransferSettings.downloadBufferSize)
+        if (state->data.size() <= fileTransferSettings.downloadBufferSize) {
+            /* Data is flowing again, so any previously requested pause is
+               no longer in effect. */
+            state->paused = false;
             return PauseTransfer::No;
+        }
 
         /* dataCallback gets called multiple times by an intermediate sink. Only
            issue the debug message the first time around. */
@@ -1330,10 +1338,17 @@ void FileTransfer::download(
                 }
 
                 if (state->paused) {
+                    /* Keep requesting an unpause until data flows again
+                       (dataCallback clears the flag): an unpause can be lost
+                       to races in the pause bookkeeping, and a transfer that
+                       stays paused never triggers the stalled-download
+                       timeout, hanging the download forever. Repeating the
+                       request is safe since unpausing an unpaused transfer
+                       is a no-op. */
                     unpauseTransfer(handle);
-                    state->paused = false;
-                }
-                state.wait(state->avail);
+                    state.wait_for(state->avail, std::chrono::seconds(1));
+                } else
+                    state.wait(state->avail);
 
                 if (state->data.empty())
                     continue;
