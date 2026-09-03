@@ -376,6 +376,20 @@ public:
         )",
         {"trusted-binary-caches"}};
 
+    Setting<bool> forwardAwsCredentials{
+        this,
+        false,
+        "forward-aws-credentials",
+        R"(
+          Whether to resolve AWS credentials for `s3://` [substituters](#conf-substituters) in the client process and hand them to the Nix daemon.
+
+          The daemon normally resolves AWS credentials itself, as `root`, so it cannot see per-user credential sources such as `~/.aws/config` profiles backed by IAM Identity Center (SSO).
+          With this setting enabled, the client resolves credentials for every AWS profile referenced by an `s3://` substituter, using the invoking user's environment and configuration, and sends them to the daemon together with the other options for that connection.
+          The daemon only uses them for the connection they were sent on, and only if the client is a [trusted user](#conf-trusted-users); credentials from other clients are ignored with a warning.
+
+          Has no effect when the store is not a remote daemon, or when Nix was built without AWS authentication support.
+        )"};
+
     // move it out in the 2nd pass
     Setting<bool> printMissing{
         this, true, "print-missing", "Whether to print what paths need to be built or downloaded."};
