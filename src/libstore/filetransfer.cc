@@ -29,6 +29,7 @@
 #include <random>
 #include <thread>
 #include <regex>
+#include <utility>
 
 namespace nix {
 
@@ -483,10 +484,14 @@ struct curlFileTransfer : public FileTransfer
 
         void unpause()
         {
-            /* Unpausing an already unpaused transfer is a no-op. */
-            if (paused) {
-                curl_easy_pause(req, CURLPAUSE_CONT);
+            /* Unconditionally tell curl to continue: unpausing an already
+               unpaused transfer is a no-op, and gating this on our own pause
+               bookkeeping risks leaving the transfer paused in curl forever
+               if the two ever disagree (a paused transfer never triggers the
+               stalled-download timeout). */
+            if (active) {
                 paused = false;
+                curl_easy_pause(req, CURLPAUSE_CONT);
             }
         }
 
@@ -864,6 +869,8 @@ struct curlFileTransfer : public FileTransfer
     private:
         bool quitting = false;
     public:
+        bool work = false;
+
         void quit()
         {
             quitting = true;
@@ -921,12 +928,14 @@ struct curlFileTransfer : public FileTransfer
     void stopWorkerThread()
     {
         /* Signal the worker thread to exit. */
-        state_.lock()->quit();
-        wakeupMulti();
+        auto state(state_.lock());
+        state->quit();
+        wakeupMulti(*state);
     }
 
-    void wakeupMulti()
+    void wakeupMulti(State & state)
     {
+        state.work = true;
         if (auto ec = ::curl_multi_wakeup(curlm.get()))
             throw curlMultiError(ec);
     }
@@ -981,25 +990,12 @@ struct curlFileTransfer : public FileTransfer
                 }
             }
 
-            /* Wait for activity, including wakeup events. */
-            long maxSleepTimeMs = items.empty() ? 10000 : 100;
-            auto sleepTimeMs = nextWakeup != std::chrono::steady_clock::time_point()
-                                   ? std::max(
-                                         0,
-                                         (int) std::chrono::duration_cast<std::chrono::milliseconds>(
-                                             nextWakeup - std::chrono::steady_clock::now())
-                                             .count())
-                                   : maxSleepTimeMs;
-
-            int numfds = 0;
-            mc = curl_multi_poll(curlm.get(), nullptr, 0, sleepTimeMs, &numfds);
-            if (mc != CURLM_OK)
-                throw curlMultiError(mc);
-
             nextWakeup = std::chrono::steady_clock::time_point();
 
             std::vector<std::shared_ptr<TransferItem>> incoming;
+            std::vector<std::weak_ptr<Item>> unpause;
             auto now = std::chrono::steady_clock::now();
+            bool haveWork;
 
             {
                 auto state(state_.lock());
@@ -1021,7 +1017,9 @@ struct curlFileTransfer : public FileTransfer
                         break;
                     }
                 }
+                unpause = std::exchange(state->unpause, {});
                 quit = state->isQuitting();
+                haveWork = std::exchange(state->work, false);
             }
 
             for (auto & item : incoming) {
@@ -1032,14 +1030,10 @@ struct curlFileTransfer : public FileTransfer
                 items[item->req] = item;
             }
 
-            /* NOTE: Unpausing may invoke callbacks to flush all buffers. */
-            auto unpause = [&]() {
-                auto state(state_.lock());
-                auto res = state->unpause;
-                state->unpause.clear();
-                return res;
-            }();
+            if (quit)
+                break;
 
+            /* NOTE: Unpausing may invoke callbacks to flush all buffers. */
             for (auto & item : unpause) {
                 /* The transfer might have completed (failed) between it getting
                    enqueued for unpause and by the time the worker thread picked
@@ -1049,6 +1043,27 @@ struct curlFileTransfer : public FileTransfer
                     continue;
                 static_cast<TransferItem &>(*ptr).unpause();
             }
+
+            /* Wait for activity, including wakeup events. */
+            long maxSleepTimeMs = items.empty() ? 10000 : 100;
+            auto sleepTimeMs = nextWakeup != std::chrono::steady_clock::time_point()
+                                   ? std::max(
+                                         0,
+                                         (int) std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             nextWakeup - std::chrono::steady_clock::now())
+                                             .count())
+                                   : maxSleepTimeMs;
+
+            /* Since https://github.com/curl/curl/commit/2a2104f3cff44bb28bb570a093be52bbeeed8f23 (8.21),
+               curl_multi_perform seems to swallow queued up events, so a wakeup sent while we were in
+               curl_multi_perform() would otherwise be lost and we'd sleep despite having work queued. */
+            if (haveWork)
+                sleepTimeMs = 0;
+
+            int numfds = 0;
+            mc = curl_multi_poll(curlm.get(), nullptr, 0, sleepTimeMs, &numfds);
+            if (mc != CURLM_OK)
+                throw curlMultiError(mc);
         }
 
         debug("download thread shutting down");
@@ -1085,9 +1100,9 @@ struct curlFileTransfer : public FileTransfer
                 throw nix::Error("cannot enqueue download request because the download thread is shutting down");
             state->incoming.push(item);
             item->enqueued = true; /* Now any exceptions should be reported via the callback. */
+            wakeupMulti(*state);
         }
 
-        wakeupMulti();
         return ItemHandle(item.get_ptr());
     }
 
@@ -1124,7 +1139,7 @@ struct curlFileTransfer : public FileTransfer
     {
         auto state(state_.lock());
         state->unpause.push_back(std::move(item));
-        wakeupMulti();
+        wakeupMulti(*state);
     }
 
     void unpauseTransfer(ItemHandle handle) override
@@ -1265,8 +1280,12 @@ void FileTransfer::download(
         state->data.append(data);
         state->avail.notify_one();
 
-        if (state->data.size() <= fileTransferSettings.downloadBufferSize)
+        if (state->data.size() <= fileTransferSettings.downloadBufferSize) {
+            /* Data is flowing again, so any previously requested pause is
+               no longer in effect. */
+            state->paused = false;
             return PauseTransfer::No;
+        }
 
         /* dataCallback gets called multiple times by an intermediate sink. Only
            issue the debug message the first time around. */
@@ -1319,10 +1338,17 @@ void FileTransfer::download(
                 }
 
                 if (state->paused) {
+                    /* Keep requesting an unpause until data flows again
+                       (dataCallback clears the flag): an unpause can be lost
+                       to races in the pause bookkeeping, and a transfer that
+                       stays paused never triggers the stalled-download
+                       timeout, hanging the download forever. Repeating the
+                       request is safe since unpausing an unpaused transfer
+                       is a no-op. */
                     unpauseTransfer(handle);
-                    state->paused = false;
-                }
-                state.wait(state->avail);
+                    state.wait_for(state->avail, std::chrono::seconds(1));
+                } else
+                    state.wait(state->avail);
 
                 if (state->data.empty())
                     continue;
