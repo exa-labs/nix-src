@@ -19,7 +19,6 @@
 #include "nix/util/git.hh"
 #include "nix/util/logging.hh"
 #include "nix/store/globals.hh"
-#include "nix/store/aws-creds.hh"
 #include "nix/store/active-builds.hh"
 #include "nix/util/provenance.hh"
 
@@ -221,26 +220,6 @@ struct TunnelSource : BufferedSource
     }
 };
 
-/**
- * Install the AWS credentials a client sent along with its options, so
- * that S3 requests made on this connection's behalf use them instead of
- * whatever the daemon could resolve itself. Only trusted clients may do
- * this; the value is never logged.
- */
-static void applyForwardedAwsCredentials(TrustedFlag trusted, const std::string & value)
-{
-    if (!trusted) {
-        warn("ignoring the AWS credentials forwarded by the client, because you are not a trusted user");
-        return;
-    }
-#if NIX_WITH_AWS_AUTH
-    getAwsCredentialsProvider()->setForwardedCredentials(decodeForwardedAwsCredentials(value));
-#else
-    warn(
-        "ignoring the AWS credentials forwarded by the client, because this daemon was built without AWS authentication support");
-#endif
-}
-
 struct ClientSettings
 {
     bool keepFailed;
@@ -316,8 +295,6 @@ struct ClientSettings
                     warn(
                         "Ignoring the client-specified plugin-files.\n"
                         "The client specifying plugins to the daemon never made sense, and was removed in Nix >=2.14.");
-                } else if (name == forwardedAwsCredentialsOption) {
-                    applyForwardedAwsCredentials(trusted, value);
                 } else if (
                     trusted || name == settings.getWorkerSettings().buildTimeout.name
                     || name == settings.getWorkerSettings().maxSilentTime.name

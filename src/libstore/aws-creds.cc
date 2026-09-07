@@ -4,10 +4,7 @@
 
 #  include <aws/crt/Types.h>
 #  include "nix/store/s3-url.hh"
-#  include "nix/util/json-utils.hh"
 #  include "nix/util/logging.hh"
-#  include "nix/util/sync.hh"
-#  include "nix/util/url.hh"
 
 #  include <aws/crt/Api.h>
 #  include <aws/crt/auth/Credentials.h>
@@ -22,8 +19,6 @@
 #  include <cstdarg>
 
 #  include <boost/unordered/concurrent_flat_map.hpp>
-
-#  include <nlohmann/json.hpp>
 
 #  include <chrono>
 #  include <future>
@@ -298,13 +293,6 @@ public:
     AwsCredentials getCredentials(const ParsedS3URL & url) override
     {
         auto profile = url.profile.value_or("");
-        {
-            auto forwarded(forwardedCredentials.readLock());
-            if (auto i = forwarded->find(profile); i != forwarded->end()) {
-                debug("using AWS credentials forwarded by the client for profile '%s'", profile);
-                return i->second;
-            }
-        }
         try {
             return getCredentialsRaw(profile);
         } catch (AwsAuthError & e) {
@@ -314,15 +302,9 @@ public:
         }
     }
 
-    void setForwardedCredentials(ForwardedAwsCredentials creds) override
-    {
-        *forwardedCredentials.lock() = std::move(creds);
-    }
-
     std::shared_ptr<Aws::Crt::Auth::ICredentialsProvider> createProviderForProfile(const std::string & profile);
 
 private:
-    SharedSync<ForwardedAwsCredentials> forwardedCredentials;
     Aws::Crt::ApiHandle apiHandle;
     std::shared_ptr<Aws::Crt::Io::TlsContext> tlsContext;
     Aws::Crt::Io::ClientBootstrap * bootstrap;
@@ -448,84 +430,6 @@ ref<AwsCredentialProvider> getAwsCredentialsProvider()
     return instance;
 }
 
-std::string encodeForwardedAwsCredentials(const ForwardedAwsCredentials & creds)
-{
-    return nlohmann::json(creds).dump();
-}
-
-ForwardedAwsCredentials decodeForwardedAwsCredentials(std::string_view encoded)
-{
-    /* Neither the JSON library's nor `json-utils`' diagnostics are safe to
-       propagate: both quote the offending input, which is secret here. */
-    try {
-        return getMap<AwsCredentials>(getObject(nlohmann::json::parse(encoded)), [](const nlohmann::json & j) {
-            return j.get<AwsCredentials>();
-        });
-    } catch (nlohmann::json::exception &) {
-        throw Error("forwarded AWS credentials are malformed");
-    } catch (Error &) {
-        throw Error("forwarded AWS credentials are malformed");
-    }
-}
-
-/**
- * The S3 URL a substituter store reference denotes, or `std::nullopt`
- * if `ref` is not an `s3://` store.
- */
-static std::optional<ParsedS3URL> substituterS3Url(const StoreReference & ref)
-{
-    auto * specified = std::get_if<StoreReference::Specified>(&ref.variant);
-    if (!specified || specified->scheme != "s3")
-        return std::nullopt;
-    auto url = parseURL(ref.render());
-    /* A store reference names a bucket, not an object, but `ParsedS3URL`
-       requires a key; use the one the store fetches first. */
-    url.path = {"", "nix-cache-info"};
-    return ParsedS3URL::parse(url);
-}
-
-ForwardedAwsCredentials resolveForwardedAwsCredentials(const std::vector<StoreReference> & substituters)
-{
-    ForwardedAwsCredentials creds;
-    for (auto & ref : substituters) {
-        auto url = substituterS3Url(ref);
-        if (!url)
-            continue;
-        auto profile = url->profile.value_or("");
-        if (creds.contains(profile))
-            continue;
-        if (auto c = getAwsCredentialsProvider()->maybeGetCredentials(*url))
-            creds.emplace(profile, std::move(*c));
-    }
-    return creds;
-}
-
 } // namespace nix
-
-namespace nlohmann {
-
-using namespace nix;
-
-AwsCredentials adl_serializer<AwsCredentials>::from_json(const json & json)
-{
-    auto & obj = getObject(json);
-    auto * sessionToken = optionalValueAt(obj, "sessionToken");
-    return AwsCredentials(
-        getString(valueAt(obj, "accessKeyId")),
-        getString(valueAt(obj, "secretAccessKey")),
-        sessionToken ? std::optional{getString(*sessionToken)} : std::nullopt);
-}
-
-void adl_serializer<AwsCredentials>::to_json(json & json, const AwsCredentials & creds)
-{
-    json = {
-        {"accessKeyId", creds.accessKeyId},
-        {"secretAccessKey", creds.secretAccessKey},
-    };
-    if (creds.sessionToken)
-        json["sessionToken"] = *creds.sessionToken;
-}
-
-} // namespace nlohmann
 
 #endif
