@@ -10,7 +10,6 @@
 #include "nix/store/worker-protocol-impl.hh"
 #include "nix/util/archive.hh"
 #include "nix/store/globals.hh"
-#include "nix/store/aws-creds.hh"
 #include "nix/store/derivations.hh"
 #include "nix/util/pool.hh"
 #include "nix/util/finally.hh"
@@ -140,16 +139,6 @@ void RemoteStore::setOptions(Connection & conn)
     overrides.erase(loggerSettings.showTrace.name);
     overrides.erase(experimentalFeatureSettings.experimentalFeatures.name);
     overrides.erase("plugin-files");
-    overrides.erase(settings.forwardAwsCredentials.name);
-#if NIX_WITH_AWS_AUTH
-    if (settings.forwardAwsCredentials) {
-        auto creds = resolveForwardedAwsCredentials(settings.getWorkerSettings().substituters.get());
-        if (!creds.empty())
-            overrides.emplace(
-                std::string{forwardedAwsCredentialsOption},
-                nix::Config::SettingInfo{.value = encodeForwardedAwsCredentials(creds), .description = ""});
-    }
-#endif
     conn.to << overrides.size();
     for (auto & i : overrides)
         conn.to << i.first << i.second.value;
