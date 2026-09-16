@@ -394,6 +394,17 @@ void LocalStore::collectGarbage(const GCOptions & options, GCResults & results)
     auto fdGCLock = openGCLock();
     FdLock gcLock(fdGCLock.get(), ltWrite, true, "waiting for the big garbage collector lock...");
 
+    if (options.skipIfAvailAbove) {
+        auto avail = getStoreAvail();
+        if (avail >= *options.skipIfAvailAbove) {
+            printInfo(
+                "skipping auto-GC: %d bytes free after acquiring the GC lock (threshold %d)",
+                avail,
+                *options.skipIfAvailAbove);
+            return;
+        }
+    }
+
     /* Synchronisation point to test ENOENT handling in
        addTempRoot(), see tests/gc-non-blocking.sh. */
     if (auto p = getEnv("_NIX_TEST_GC_SYNC_1"))
@@ -827,23 +838,28 @@ void LocalStore::collectGarbage(const GCOptions & options, GCResults & results)
     // if (options.action == GCOptions::gcDeleteDead) vacuumDB();
 }
 
+uint64_t LocalStore::getStoreAvail()
+{
+    static auto fakeFreeSpaceFile = getEnv("_NIX_TEST_FREE_SPACE_FILE");
+
+    if (fakeFreeSpaceFile)
+        return std::stoll(readFile(*fakeFreeSpaceFile));
+
+#if HAVE_STATVFS
+    struct statvfs st;
+    if (statvfs(config->realStoreDir.get().c_str(), &st))
+        throw SysError("getting filesystem info about '%s'", PathFmt(config->realStoreDir.get()));
+
+    return (uint64_t) st.f_bavail * st.f_frsize;
+#else
+    throw UnimplementedError("free-space checking is not supported on this platform");
+#endif
+}
+
 void LocalStore::autoGC(bool sync)
 {
 #if HAVE_STATVFS
     const auto & gcSettings = config->getLocalSettings().getGCSettings();
-
-    static auto fakeFreeSpaceFile = getEnv("_NIX_TEST_FREE_SPACE_FILE");
-
-    auto getAvail = [this]() -> uint64_t {
-        if (fakeFreeSpaceFile)
-            return std::stoll(readFile(*fakeFreeSpaceFile));
-
-        struct statvfs st;
-        if (statvfs(config->realStoreDir.get().c_str(), &st))
-            throw SysError("getting filesystem info about '%s'", PathFmt(config->realStoreDir.get()));
-
-        return (uint64_t) st.f_bavail * st.f_frsize;
-    };
 
     std::shared_future<void> future;
 
@@ -858,7 +874,7 @@ void LocalStore::autoGC(bool sync)
                with plenty of free space. Adds are safe to run concurrently
                with GC (they take the temp-roots / per-path locks), so above
                the floor we let them proceed. */
-            if (!sync || getAvail() >= gcSettings.minFree)
+            if (!sync || getStoreAvail() >= gcSettings.minFree)
                 return;
             future = state->gcFuture;
             debug("waiting for auto-GC to finish");
@@ -870,7 +886,7 @@ void LocalStore::autoGC(bool sync)
         if (now < state->lastGCCheck + std::chrono::seconds(gcSettings.minFreeCheckInterval))
             return;
 
-        auto avail = getAvail();
+        auto avail = getStoreAvail();
 
         state->lastGCCheck = now;
 
@@ -885,7 +901,7 @@ void LocalStore::autoGC(bool sync)
         std::promise<void> promise;
         future = state->gcFuture = promise.get_future().share();
 
-        std::thread([promise{std::move(promise)}, this, avail, getAvail, &gcSettings]() mutable {
+        std::thread([promise{std::move(promise)}, this, avail, &gcSettings]() mutable {
             try {
 
                 /* Wake up any threads waiting for the auto-GC to finish. */
@@ -898,6 +914,7 @@ void LocalStore::autoGC(bool sync)
 
                 GCOptions options;
                 options.maxFreed = gcSettings.maxFree - avail;
+                options.skipIfAvailAbove = gcSettings.minFree;
 
                 printInfo("running auto-GC to free %d bytes", options.maxFreed);
 
@@ -905,7 +922,7 @@ void LocalStore::autoGC(bool sync)
 
                 collectGarbage(options, results);
 
-                _state->lock()->availAfterGC = getAvail();
+                _state->lock()->availAfterGC = getStoreAvail();
 
             } catch (...) {
                 // FIXME: we could propagate the exception to the

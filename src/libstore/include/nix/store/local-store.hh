@@ -486,6 +486,13 @@ protected:
 private:
 
     /**
+     * Free space in bytes on the filesystem holding the store.
+     * Honors the `_NIX_TEST_FREE_SPACE_FILE` override used by the
+     * functional tests; requires `statvfs` otherwise.
+     */
+    uint64_t getStoreAvail();
+
+    /**
      * Retrieve the current version of the database schema.
      * If the database does not exist yet, the version returned will be 0.
      */
