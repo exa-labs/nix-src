@@ -1543,9 +1543,11 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
                         errors = true;
                     }
                 }
-            } catch (SysError & e) {
+            } catch (FileNotFound &) {
                 /* The link may be garbage-collected between iterating the
                    directory and hashing it. */
+                continue;
+            } catch (SysError & e) {
                 if (e.errNo == ENOENT)
                     continue;
                 throw;
