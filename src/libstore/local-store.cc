@@ -1572,7 +1572,7 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
                 auto current = hashSink.finish();
 
                 if (info->narHash != nullHash && info->narHash != current.hash) {
-                    if (!isValidPath(i)) {
+                    if (!isValidPathUncached(i)) {
                         /* The path was garbage-collected while being hashed. */
                         logWarning(
                             {.msg = HintFmt("path '%s' was garbage-collected during verification", printStorePath(i))});
@@ -1605,7 +1605,7 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
                         update = true;
                     }
 
-                    if (update && isValidPath(i))
+                    if (update && isValidPathUncached(i))
                         updatePathInfo(*_state->lock(), *info);
                 }
 
@@ -1613,7 +1613,7 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
                 /* It's possible that the path got GC'ed, so ignore
                    errors on invalid paths: a path collected during the
                    scan is not an error. */
-                if (isValidPath(i)) {
+                if (isValidPathUncached(i)) {
                     logError(e.info());
                     errors = true;
                 } else
