@@ -1511,12 +1511,14 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
 {
     printInfo("reading the Nix store...");
 
-    /* Acquire the global GC lock to get a consistent snapshot of
-       existing and valid paths. */
-    auto fdGCLock = openGCLock();
-    FdLock gcLock(fdGCLock.get(), ltRead, true, "waiting for the big garbage collector lock...");
-
-    auto [errors, validPaths] = verifyAllValidPaths(repair);
+    auto [errors, validPaths] = [&] {
+        /* Acquire the global GC lock to get a consistent snapshot of
+           existing and valid paths. The content check below runs without it:
+           it tolerates paths being garbage-collected mid-scan. */
+        auto fdGCLock = openGCLock();
+        FdLock gcLock(fdGCLock.get(), ltRead, true, "waiting for the big garbage collector lock...");
+        return verifyAllValidPaths(repair);
+    }();
 
     /* Optionally, check the content hashes (slow). */
     if (checkContents) {
@@ -1527,18 +1529,26 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
             checkInterrupt();
             auto name = link.path().filename();
             printMsg(lvlTalkative, "checking contents of %s", PathFmt(name));
-            std::string hash =
-                hashPath(makeFSSourceAccessor(link.path()), FileIngestionMethod::NixArchive, HashAlgorithm::SHA256)
-                    .first.to_string(HashFormat::Nix32, false);
-            if (hash != name.string()) {
-                printError(
-                    "link %s was modified! expected hash %s, got '%s'", PathFmt(link.path()), name.string(), hash);
-                if (repair) {
-                    std::filesystem::remove(link.path());
-                    printInfo("removed link %s", PathFmt(link.path()));
-                } else {
-                    errors = true;
+            try {
+                std::string hash =
+                    hashPath(makeFSSourceAccessor(link.path()), FileIngestionMethod::NixArchive, HashAlgorithm::SHA256)
+                        .first.to_string(HashFormat::Nix32, false);
+                if (hash != name.string()) {
+                    printError(
+                        "link %s was modified! expected hash %s, got '%s'", PathFmt(link.path()), name.string(), hash);
+                    if (repair) {
+                        std::filesystem::remove(link.path());
+                        printInfo("removed link %s", PathFmt(link.path()));
+                    } else {
+                        errors = true;
+                    }
                 }
+            } catch (SysError & e) {
+                /* The link may be garbage-collected between iterating the
+                   directory and hashing it. */
+                if (e.errNo == ENOENT)
+                    continue;
+                throw;
             }
         }
 
@@ -1593,12 +1603,13 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
 
             } catch (Error & e) {
                 /* It's possible that the path got GC'ed, so ignore
-                   errors on invalid paths. */
-                if (isValidPath(i))
+                   errors on invalid paths: a path collected during the
+                   scan is not an error. */
+                if (isValidPath(i)) {
                     logError(e.info());
-                else
+                    errors = true;
+                } else
                     logWarning(e.info());
-                errors = true;
             }
         }
     }
