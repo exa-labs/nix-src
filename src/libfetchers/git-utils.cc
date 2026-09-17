@@ -363,8 +363,12 @@ struct GitRepoImpl : GitRepo, std::enable_shared_from_this<GitRepoImpl>
         //                     copying parts of the buffer to a separate thread.
         //                     (synchronously on the git_packbuilder_write_buf thread)
         Indexer indexer;
+        ObjectDb odb;
+        if (git_repository_odb(Setter(odb), repo.get()))
+            throw GitError("getting Git object database");
+
         git_indexer_progress stats;
-        if (git_indexer_new(Setter(indexer), pack_dir_path.c_str(), 0, nullptr, nullptr))
+        if (git_indexer_new(Setter(indexer), pack_dir_path.c_str(), 0, odb.get(), nullptr))
             throw GitError("creating git packfile indexer");
 
         // TODO: provide index callback for checkInterrupt() termination
@@ -394,26 +398,7 @@ struct GitRepoImpl : GitRepo, std::enable_shared_from_this<GitRepoImpl>
     {
         // TODO: as an optimization, it would be nice to include `this` in the pool.
         return Pool<GitRepoImpl>(std::numeric_limits<size_t>::max(), [this]() -> ref<GitRepoImpl> {
-            auto repo = make_ref<GitRepoImpl>(path, options);
-
-            /* Monkey-patching the pack backend to only read the pack directory
-               once. Otherwise it will do a readdir for each added oid when it's
-               not found and that translates to ~6 syscalls. Since we are never
-               writing pack files until flushing we can force the odb backend to
-               read the directory just once. It's very convenient that the vtable is
-               semi-public interface and is up for grabs.
-
-               This is purely an optimization for our use-case with a tarball cache.
-               libgit2 calls refresh() if the backend provides it when an oid isn't found.
-               We are only writing objects to a mempack (it has higher priority) and there isn't
-               a realistic use-case where a previously missing object would appear from thin air
-               on the disk (unless another process happens to be unpacking a similar tarball to
-               the cache at the same time, but that's a very unrealistic scenario).
-            */
-            if (auto * backend = repo->packBackend)
-                backend->refresh = nullptr;
-
-            return repo;
+            return make_ref<GitRepoImpl>(path, options);
         });
     }
 
