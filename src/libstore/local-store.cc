@@ -1572,6 +1572,12 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
                 auto current = hashSink.finish();
 
                 if (info->narHash != nullHash && info->narHash != current.hash) {
+                    if (!isValidPath(i)) {
+                        /* The path was garbage-collected while being hashed. */
+                        logWarning(
+                            {.msg = HintFmt("path '%s' was garbage-collected during verification", printStorePath(i))});
+                        continue;
+                    }
                     printError(
                         "path '%s' was modified! expected hash '%s', got '%s'",
                         printStorePath(i),
@@ -1599,7 +1605,7 @@ bool LocalStore::verifyStore(bool checkContents, RepairFlag repair)
                         update = true;
                     }
 
-                    if (update)
+                    if (update && isValidPath(i))
                         updatePathInfo(*_state->lock(), *info);
                 }
 
