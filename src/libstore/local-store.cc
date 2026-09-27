@@ -1033,12 +1033,16 @@ void LocalStore::doAddToStore(const ValidPathInfo & info, Source & source, Repai
 
     auto realPath = toRealPath(info.path);
 
-    // TODO: make repair more safe: write to a temporary location first before renaming/deleting.
-    deletePath(realPath);
-
     /* Maybe free up some disk space (before writing the NAR) so that
        restorePath() below doesn't fail with ENOSPC. */
     autoGC();
+
+    /* We'll restore to a temporary location accessible only to us first, confirm that
+       the narHash/narSize/ca match after restoration and only then move the path into
+       the expected location. */
+    auto [tempDir, tempDirFd] = createTempDirInStore();
+    AutoDelete delTempDir(tempDir);
+    std::filesystem::path tempPath = tempDir / "x";
 
     /* While restoring the path from the NAR, compute the hash
        of the NAR. */
@@ -1046,7 +1050,7 @@ void LocalStore::doAddToStore(const ValidPathInfo & info, Source & source, Repai
 
     TeeSource wrapperSource{source, hashSink};
 
-    restorePath(realPath, wrapperSource, localSettings.fsyncStorePaths);
+    restorePath(tempPath, wrapperSource, localSettings.fsyncStorePaths);
 
     auto hashResult = hashSink.finish();
 
@@ -1067,8 +1071,7 @@ void LocalStore::doAddToStore(const ValidPathInfo & info, Source & source, Repai
     if (info.ca) {
         auto & specified = *info.ca;
         auto actualHash = ({
-            auto accessor = getFSAccessor(false);
-            CanonPath path{info.path.to_string()};
+            SourcePath sourcePath = {makeFSSourceAccessor(tempPath)};
             Hash h{HashAlgorithm::SHA256}; // throwaway def to appease C++
             auto fim = specified.method.getFileIngestionMethod();
             switch (fim) {
@@ -1078,12 +1081,12 @@ void LocalStore::doAddToStore(const ValidPathInfo & info, Source & source, Repai
                     specified.hash.algo,
                     std::string{info.path.hashPart()},
                 };
-                dumpPath({accessor, path}, caSink, (FileSerialisationMethod) fim);
+                dumpPath(sourcePath, caSink, (FileSerialisationMethod) fim);
                 h = caSink.finish().hash;
                 break;
             }
             case FileIngestionMethod::Git:
-                h = git::dumpHash(specified.hash.algo, {accessor, path}).hash;
+                h = git::dumpHash(specified.hash.algo, sourcePath).hash;
                 break;
             }
             ContentAddress{
@@ -1099,6 +1102,19 @@ void LocalStore::doAddToStore(const ValidPathInfo & info, Source & source, Repai
                 actualHash.hash.to_string(HashFormat::Nix32, true));
         }
     }
+
+    /* Now that the content address / signed NAR contents is checked, we can move the path into place.
+       TODO: We should use atomic exchange (RENAME_EXCHANGE and renamex_np with RENAME_SWAP) if possible. */
+
+    /* Delete the path for good measure even if not repairing. */
+    deletePath(realPath);
+
+    /* Move the temporary path we restored above. */
+    moveFile(tempPath, realPath);
+
+    /* Clean up the staging directory. */
+    delTempDir.deletePath();
+    tempDirFd.close();
 
     canonicalisePathMetaData(realPath, {NIX_WHEN_SUPPORT_ACLS(localSettings.ignoredAcls)});
 
