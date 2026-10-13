@@ -804,17 +804,27 @@ void LocalStore::collectGarbage(const GCOptions & options, GCResults & results)
                 continue;
             auto path = linksDir / name;
 
-            auto st = lstat(path);
+            auto st = maybeLstat(path);
+            if (!st)
+                continue;
 
-            if (st.st_nlink != 1) {
-                actualSize += st.st_size;
-                unsharedSize += (st.st_nlink - 1) * st.st_size;
+            if (st->st_nlink != 1) {
+                actualSize += st->st_size;
+                unsharedSize += (st->st_nlink - 1) * st->st_size;
                 continue;
             }
 
             printMsg(lvlTalkative, "deleting unused link %1%", PathFmt(path));
 
-            unlink(path);
+            try {
+                unlink(path);
+            } catch (SysError & e) {
+                /* The link may have been removed by a concurrent verify or
+                   other unlinker between readdir and here. */
+                if (e.errNo == ENOENT)
+                    continue;
+                throw;
+            }
 
             /* Do not account for deleted file here. Rely on deletePath()
                accounting.  */
